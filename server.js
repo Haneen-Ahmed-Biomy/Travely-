@@ -5,24 +5,27 @@ const mysql = require('mysql2/promise');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-
+// Create MySQL connection pool (fill in your own MySQL credentials)
 const pool = mysql.createPool({
   host: 'localhost',
-  user: 'root',          
-  password: 'Rakwa5678@',          
-  database: 'travel' 
+  user: 'root',          // change if your MySQL user is different
+  password: 'Rakwa5678@',          // put your MySQL password here
+  database: 'travel' // database you will create below
 });
 
-
+// Parse form data (from login form) and JSON (for APIs)
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
+// Serve static files (HTML, CSS, JS, images) from current folder
 app.use(express.static(__dirname));
 
+// Example API route you can call from script.js
 app.get('/api/ping', (req, res) => {
   res.json({ message: 'Backend is working!', time: new Date().toISOString() });
 });
 
+// Check database connection and show which database is connected
 app.get('/api/check-db', async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT DATABASE() as current_db');
@@ -58,6 +61,7 @@ app.get('/api/check-db', async (req, res) => {
   }
 });
 
+// Register new user (you can hook this up to a real "Create Account" form later)
 app.post('/register', async (req, res) => {
   try {
     const { username, email, password } = req.body;
@@ -66,6 +70,7 @@ app.post('/register', async (req, res) => {
       return res.status(400).send('Missing username, email, or password');
     }
 
+    // Check if user already exists
     const [rows] = await pool.query(
       'SELECT id FROM users WHERE username = ? OR email = ? LIMIT 1',
       [username, email]
@@ -77,7 +82,7 @@ app.post('/register', async (req, res) => {
 
     await pool.query(
       'INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)',
-      [username, email, password] 
+      [username, email, password] // storing plain text (user requested)
     );
 
     return res.send('Registration successful. You can now log in.');
@@ -87,6 +92,7 @@ app.post('/register', async (req, res) => {
   }
 });
 
+// Login using MySQL users table
 app.post('/login', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -95,6 +101,7 @@ app.post('/login', async (req, res) => {
       return res.status(400).send('Missing username or password');
     }
 
+    // Allow login with either username OR email typed into the "username" field
     const [rows] = await pool.query(
       'SELECT id, username, email, password_hash FROM users WHERE username = ? OR email = ? LIMIT 1',
       [username, username]
@@ -116,6 +123,8 @@ app.post('/login', async (req, res) => {
 
     console.log('Login successful for user:', user.username || user.email);
 
+    // Store user session (simple approach - in production use proper sessions/cookies)
+    // For now, we'll redirect with user ID in query param, frontend will store in localStorage
     return res.redirect(`/?userId=${user.id}&login=success`);
   } catch (err) {
     console.error('Error in /login:', err);
@@ -123,6 +132,9 @@ app.post('/login', async (req, res) => {
   }
 });
 
+// ==================== FLIGHT ROUTES ====================
+
+// Search flights (stores search query + returns results)
 app.post('/api/flights/search', async (req, res) => {
   try {
     const { origin, destination, departure, return: returnDate, tripType, class: travelClass, adults, children, infants, userId } = req.body;
@@ -131,11 +143,13 @@ app.post('/api/flights/search', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields: origin, destination, departure' });
     }
 
+    // Store search query for analytics
     await pool.query(
       'INSERT INTO flight_searches (origin, destination, departure_date, return_date, trip_type, travel_class, adults, children, infants, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [origin, destination, departure, returnDate || null, tripType || 'round-trip', travelClass || 'economy', adults || 1, children || 0, infants || 0, userId || null]
     );
 
+    // Get available flights matching search criteria
     const [flights] = await pool.query(
       `SELECT * FROM available_flights 
        WHERE origin LIKE ? AND destination LIKE ? AND travel_class = ?
@@ -144,6 +158,7 @@ app.post('/api/flights/search', async (req, res) => {
       [`%${origin}%`, `%${destination}%`, travelClass || 'economy']
     );
 
+    // If no flights in DB, return sample data
     if (flights.length === 0) {
       const sampleFlights = [
         { id: 1, airline: 'Emirates', departure_time: '08:00', arrival_time: '14:30', duration: '6h 30m', price: 450, travel_class: 'economy' },
@@ -194,6 +209,9 @@ app.post('/api/flights/book', async (req, res) => {
   }
 });
 
+// ==================== HOTEL ROUTES ====================
+
+// Search hotels (stores search query + returns results)
 app.post('/api/hotels/search', async (req, res) => {
   try {
     const { city, checkin, checkout, guests, rooms, userId } = req.body;
@@ -202,11 +220,13 @@ app.post('/api/hotels/search', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields: city, checkin, checkout' });
     }
 
+    // Store search query for analytics
     await pool.query(
       'INSERT INTO hotel_searches (city, checkin_date, checkout_date, guests, rooms, user_id) VALUES (?, ?, ?, ?, ?, ?)',
       [city, checkin, checkout, guests || 2, rooms || 1, userId || null]
     );
 
+    // Get available hotels matching search criteria
     const [hotels] = await pool.query(
       `SELECT * FROM available_hotels 
        WHERE city LIKE ? AND available_rooms >= ?
@@ -215,6 +235,7 @@ app.post('/api/hotels/search', async (req, res) => {
       [`%${city}%`, rooms || 1]
     );
 
+    // If no hotels in DB, return sample data
     if (hotels.length === 0) {
       const sampleHotels = [
         { id: 1, name: 'Grand Palace Hotel', stars: 5, price_per_night: 350, location: 'City Center', image_url: 'https://images.unsplash.com/photo-1566073771259-6a8506099945?w=400' },
@@ -244,7 +265,7 @@ app.post('/api/hotels/book', async (req, res) => {
       return res.status(400).json({ error: 'Missing required booking fields' });
     }
 
-    // Calc total nights and price
+    // Calculate total nights and price
     const checkin = new Date(checkinDate);
     const checkout = new Date(checkoutDate);
     const totalNights = Math.ceil((checkout - checkin) / (1000 * 60 * 60 * 24));
@@ -268,6 +289,9 @@ app.post('/api/hotels/book', async (req, res) => {
   }
 });
 
+// ==================== USER BOOKINGS ====================
+
+// Get user's flight bookings
 app.get('/api/bookings/flights/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
@@ -282,6 +306,7 @@ app.get('/api/bookings/flights/:userId', async (req, res) => {
   }
 });
 
+// Get user's hotel bookings
 app.get('/api/bookings/hotels/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
@@ -296,6 +321,9 @@ app.get('/api/bookings/hotels/:userId', async (req, res) => {
   }
 });
 
+// ==================== ANALYTICS ====================
+
+// Get search analytics (for admin/dashboard)
 app.get('/api/analytics/searches', async (req, res) => {
   try {
     const [flightSearches] = await pool.query('SELECT COUNT(*) as count FROM flight_searches');
@@ -315,7 +343,7 @@ app.get('/api/analytics/searches', async (req, res) => {
   }
 });
 
-// Fallback
+// Fallback: send index.html for the root
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
@@ -323,7 +351,7 @@ app.get('/', (req, res) => {
 app.listen(PORT, async () => {
   console.log(`Server is running on http://localhost:${PORT}`);
   
-  // Check  database connection info
+  // Check and display database connection info
   try {
     const [rows] = await pool.query('SELECT DATABASE() as current_db');
     const currentDb = rows[0].current_db;
@@ -333,3 +361,4 @@ app.listen(PORT, async () => {
     console.error('❌ Database connection error:', err.message);
   }
 });
+
